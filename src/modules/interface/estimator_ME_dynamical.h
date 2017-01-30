@@ -55,17 +55,13 @@
 
 #include <stdint.h>
 #include "stabilizer_types.h"
-#include "M_types.h"
 
 void stateEstimatorInit(void);
-void stateEstimatorUpdate(M_state_t *state, sensorData_t *sensors, M_control_t *control);
+void stateEstimatorUpdate(state_t *state, sensorData_t *sensors, control_t *control);
 bool stateEstimatorTest(void);
 
 
 /**
  * The filter supports the incorporation of additional sensors into the state estimate via the following functions:
  */
-bool stateEstimatorEnqueueTDOA(tdoaMeasurement_t *uwb);
-bool stateEstimatorEnqueuePosition(positionMeasurement_t *pos);
-bool stateEstimatorEnqueueDistance(distanceMeasurement_t *dist);
-bool stateEstimatorEnqueueTOF(tofMeasurement_t *tof);
+bool stateEstimatorEnqueueTOAArray(TOAArray_t *TOAArray);

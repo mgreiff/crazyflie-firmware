@@ -35,12 +35,27 @@
 #include "stabilizer.h"
 
 #include "sensors.h"
-#include "commander.h"
 #include "ext_position.h"
 #include "sitaw.h"
-#include "controller.h"
-#include "power_distribution.h"
 
+#define SETPOINT_TYPE_M
+#define CONTROL_TYPE_M
+#define POWER_DISTRIBUTION_TYPE_M
+
+// Setpoint
+#include "M_sequenceCommander.h"  // New commander
+#include "M_flatnessGenerator.h"  // Flatness generator
+//#include "commander.h"            // Old commander
+
+// Controller
+#include "M_control.h"            // New
+#include "controller.h"           // Old
+
+// Power distribution
+#include "M_powerDistribution.h"  // New
+#include "power_distribution.h"   // Old
+
+// State estimator
 #ifdef ESTIMATOR_TYPE_kalman
 #include "estimator_kalman.h"
 #else
@@ -55,6 +70,12 @@ static sensorData_t sensorData;
 static state_t state;
 static control_t control;
 
+// State variables for the M-control scheme.
+static M_setpoint_t M_setpoint;
+static M_mode_t M_mode;
+static M_state_t M_state;
+static M_control_t M_controlsignal;
+
 static void stabilizerTask(void* param);
 
 void stabilizerInit(void)
@@ -64,8 +85,23 @@ void stabilizerInit(void)
 
   sensorsInit();
   stateEstimatorInit();
+
+#if defined(SETPOINT_TYPE_M)
+  commanderInit_M();
+#endif
+
+#if defined(CONTROL_TYPE_M)
+  stateControllerInit_M();
+#else
   stateControllerInit();
+#endif
+
+#if defined(POWER_DISTRIBUTION_TYPE_M)
+  powerDistributionInit_M();
+#else
   powerDistributionInit();
+#endif
+
 #if defined(SITAW_ENABLED)
   sitAwInit();
 #endif
@@ -82,8 +118,13 @@ bool stabilizerTest(void)
 
   pass &= sensorsTest();
   pass &= stateEstimatorTest();
+#ifndef CONTROL_TYPE_M
   pass &= stateControllerTest();
+#endif
+
+#ifndef POWER_DISTRIBUTION_TYPE_M
   pass &= powerDistributionTest();
+#endif
 
   return pass;
 }
@@ -110,38 +151,99 @@ static void stabilizerTask(void* param)
 
   while(1) {
     vTaskDelayUntil(&lastWakeTime, F2T(RATE_MAIN_LOOP));
-
-    getExtPosition(&state);
-#ifdef ESTIMATOR_TYPE_kalman
-    stateEstimatorUpdate(&state, &sensorData, &control);
+    
+    // State estimation
+#if defined(ESTIMATOR_TYPE_kalman)
+    stateEstimatorUpdate(&M_state, &sensorData, &M_controlsignal);
 #else
     sensorsAcquire(&sensorData, tick);
     stateEstimator(&state, &sensorData, tick);
 #endif
 
+    // ~~~ Commander and references ~~~
+#if defined(SETPOINT_TYPE_M)
+    commanderGetSetpoint_M(&M_setpoint, &M_mode, &M_state, tick);
+    flatnessExpansion_M(&M_setpoint, &M_mode);
+#else
+    getExtPosition(&state);
     commanderGetSetpoint(&setpoint, &state);
+#endif
 
+    // ~~~ Controller and situational awareness ~~~
+#if defined(CONTROL_TYPE_M)
+    if (M_setpoint.position.z > 0.1f) {
+      M_mode.controller.current = 4;
+      M_mode.flatness.eulerAngles = true;
+      M_mode.flatness.quaternion = true;
+      M_mode.flatness.any = true;
+      M_mode.flatness.bodyacceleration = false;
+      M_mode.flatness.bodyrate = true;
+      M_mode.flatness.torque = false;
+    } else {
+      M_mode.controller.current = 0;
+      M_mode.flatness.eulerAngles = false;
+      M_mode.flatness.quaternion = false;
+      M_mode.flatness.any = false;
+      M_mode.flatness.bodyacceleration = false;
+      M_mode.flatness.bodyrate = false;
+      M_mode.flatness.torque = false;
+    }
+    stateController_M(&M_controlsignal, &M_setpoint, &M_mode, &M_state, tick);
+#else
+    setpoint.position = M_setpoint.position;
+    setpoint.velocity = M_setpoint.position;
+    setpoint.attitude.roll = M_setpoint.eulerAngles.pitch;
+    setpoint.attitude.pitch = -M_setpoint.eulerAngles.roll;
+    setpoint.attitude.yaw = M_setpoint.eulerAngles.yaw;
+    
+    if (setpoint.position.z > 0.3f){
+      setpoint.mode.x = modeAbs;
+      setpoint.mode.y = modeAbs;
+      setpoint.mode.z = modeAbs;
+      setpoint.mode.roll = modeDisable;
+      setpoint.mode.pitch = modeDisable;
+      setpoint.mode.yaw = modeAbs;
+    }else{
+      setpoint.mode.x = modeDisable;
+      setpoint.mode.y = modeDisable;
+      setpoint.mode.z = modeDisable;
+      setpoint.mode.roll = modeDisable;
+      setpoint.mode.pitch = modeDisable;
+      setpoint.mode.yaw = modeDisable;
+    }
     sitAwUpdateSetpoint(&setpoint, &sensorData, &state);
+    stateController(&control, &sensorData, &state, &setpoint, tick);
+#endif
 
-    stateController(&control, &setpoint, &sensorData, &state, tick);
+
+    // ~~~ Power distribution ~~~
+#if defined(POWER_DISTRIBUTION_TYPE_M)
+    powerDistribution_M(&M_mode, &M_controlsignal);
+#else
     powerDistribution(&control);
-
+#endif
     tick++;
   }
 }
 
-LOG_GROUP_START(ctrltarget)
-LOG_ADD(LOG_FLOAT, roll, &setpoint.attitude.roll)
-LOG_ADD(LOG_FLOAT, pitch, &setpoint.attitude.pitch)
-LOG_ADD(LOG_FLOAT, yaw, &setpoint.attitudeRate.yaw)
-LOG_GROUP_STOP(ctrltarget)
+// Marcus log groups (required for compatibility with the ROS applicaton)
+LOG_GROUP_START(reference)
+LOG_ADD(LOG_FLOAT, x, &M_setpoint.position.x)
+LOG_ADD(LOG_FLOAT, y, &M_setpoint.position.y)
+LOG_ADD(LOG_FLOAT, z, &M_setpoint.position.z)
+LOG_ADD(LOG_FLOAT, roll, &M_setpoint.eulerAngles.roll)
+LOG_ADD(LOG_FLOAT, pitch, &M_setpoint.eulerAngles.pitch)
+LOG_ADD(LOG_FLOAT, yaw, &M_setpoint.eulerAngles.yaw)
+LOG_GROUP_STOP(reference)
 
-LOG_GROUP_START(stabilizer)
-LOG_ADD(LOG_FLOAT, roll, &state.attitude.roll)
-LOG_ADD(LOG_FLOAT, pitch, &state.attitude.pitch)
-LOG_ADD(LOG_FLOAT, yaw, &state.attitude.yaw)
-LOG_ADD(LOG_UINT16, thrust, &control.thrust)
-LOG_GROUP_STOP(stabilizer)
+LOG_GROUP_START(measured)
+LOG_ADD(LOG_FLOAT, x, &M_state.position.x)
+LOG_ADD(LOG_FLOAT, y, &M_state.position.y)
+LOG_ADD(LOG_FLOAT, z, &M_state.position.z)
+LOG_ADD(LOG_FLOAT, roll, &M_state.eulerAngles.roll)
+LOG_ADD(LOG_FLOAT, pitch, &M_state.eulerAngles.pitch)
+LOG_ADD(LOG_FLOAT, yaw, &M_state.eulerAngles.yaw)
+LOG_GROUP_STOP(measured)
 
 LOG_GROUP_START(acc)
 LOG_ADD(LOG_FLOAT, x, &sensorData.acc.x)
@@ -167,6 +269,7 @@ LOG_ADD(LOG_FLOAT, y, &sensorData.mag.y)
 LOG_ADD(LOG_FLOAT, z, &sensorData.mag.z)
 LOG_GROUP_STOP(mag)
 
-LOG_GROUP_START(controller)
-LOG_ADD(LOG_INT16, ctr_yaw, &control.yaw)
-LOG_GROUP_STOP(controller)
+// Parameters for mode switching
+PARAM_GROUP_START(controller)
+PARAM_ADD(PARAM_UINT8, mode, &M_mode.controller.current)
+PARAM_GROUP_STOP(controller)

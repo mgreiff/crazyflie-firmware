@@ -11,8 +11,6 @@
 
 ## Enable biq quad deck features
 # CFLAGS += -DENABLE_BQ_DECK
-# CFLAGS += -DBQ_DECK_ENABLE_PM
-# CFLAGS += -DBQ_DECK_ENABLE_OSD
 
 ## Use morse when flashing the LED to indicate that the Crazyflie is calibrated
 # CFLAGS += -DCALIBRATED_LED_MORSE
@@ -22,3 +20,5 @@
 
 ## Automatically reboot to bootloader before flashing
 # CLOAD_CMDS = -w radio://0/100/2M/E7E7E7E7E7
+
+ESTIMATOR=kalman

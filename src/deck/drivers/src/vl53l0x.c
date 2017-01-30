@@ -39,21 +39,9 @@
 
 #include "stabilizer_types.h"
 #ifdef ESTIMATOR_TYPE_kalman
-
 #include "estimator_kalman.h"
 #include "arm_math.h"
-
-//#define UPDATE_KALMAN_WITH_RANGING // uncomment to push into the kalman
-#ifdef UPDATE_KALMAN_WITH_RANGING
-#define RANGE_OUTLIER_LIMIT 1500 // the measured range is in [mm]
-// Measurement noise model
-static float expPointA = 1.0f;
-static float expStdA = 0.0025f; // STD at elevation expPointA [m]
-static float expPointB = 1.3f;
-static float expStdB = 0.2f;    // STD at elevation expPointB [m]
-static float expCoeff;
-#endif // UPDATE_KALMAN_WITH_RANGING
-#endif // ESTIMATOR_TYPE_kalman
+#endif
 
 static uint8_t devAddr;
 static I2C_Dev *I2Cx;
@@ -63,7 +51,7 @@ static uint16_t io_timeout = 0;
 static bool did_timeout;
 static uint16_t timeout_start_ms;
 
-static uint16_t range_last = 0;
+static uint16_t range_last = 10;
 
 // Record the current time to check an upcoming timeout against
 #define startTimeout() (timeout_start_ms = xTaskGetTickCount())
@@ -147,12 +135,7 @@ void vl53l0xInit(DeckInfo* info)
   I2Cx = I2C1_DEV;
   devAddr = VL53L0X_DEFAULT_ADDRESS;
   xTaskCreate(vl53l0xTask, "vl53l0x", 2*configMINIMAL_STACK_SIZE, NULL, 3, NULL);
-  
-#if defined(ESTIMATOR_TYPE_kalman) && defined(UPDATE_KALMAN_WITH_RANGING)
-  // pre-compute constant in the measurement noise mdoel
-  expCoeff = logf(expStdB / expStdA) / (expPointB - expPointA);
-#endif
-  
+
   isInit = true;
 }
 
@@ -162,7 +145,7 @@ bool vl53l0xTest(void)
 
   if (!isInit)
     return false;
-       // Measurement noise model
+
   testStatus  = vl53l0xTestConnection();
   testStatus &= vl53l0xInitSensor(true);
 
@@ -180,19 +163,13 @@ void vl53l0xTask(void* arg)
   while (1) {
     xLastWakeTime = xTaskGetTickCount();
     range_last = vl53l0xReadRangeContinuousMillimeters();
-#if defined(ESTIMATOR_TYPE_kalman) && defined(UPDATE_KALMAN_WITH_RANGING)
+#if defined(ESTIMATOR_TYPE_kalman)
     // check if range is feasible and push into the kalman filter
-    // the sensor should not be able to measure >3 [m], and outliers typically
-    // occur as >8 [m] measurements
-    if (range_last < RANGE_OUTLIER_LIMIT){
-    
-      // Form measurement
-      tofMeasurement_t tofData;
-      tofData.timestamp = xTaskGetTickCount();
-      tofData.distance = (float)range_last * 0.001f; // Scale from [mm] to [m]
-      tofData.stdDev = expStdA * (1.0f  + expf( expCoeff * ( tofData.distance - expPointA)));
-      stateEstimatorEnqueueTOF(&tofData);
-    }
+    tofMeasurement_t tofData;
+    tofData.timestamp = 100;
+    tofData.distance = (float)range_last;
+    tofData.stdDev = 0.0025;
+    stateEstimatorEnqueueTOF(&tofData);
 #endif
     vTaskDelayUntil(&xLastWakeTime, M2T(measurement_timing_budget_ms));
   }
@@ -477,7 +454,7 @@ bool vl53l0xInitSensor(bool io_2v8)
 // Defaults to 0.25 MCPS as initialized by the ST API and this library.
 bool vl53l0xSetSignalRateLimit(float limit_Mcps)
 {
-  if (limit_Mcps < 0 || limit_Mcps > 511.99f) { return false; }
+  if (limit_Mcps < 0 || limit_Mcps > 511.99) { return false; }
 
   // Q9.7 fixed point format (9 integer bits, 7 fractional bits)
   uint16_t fixed_pt = limit_Mcps * (1 << 7);
@@ -1151,8 +1128,3 @@ static const DeckDriver vl53l0x_deck = {
 };
 
 DECK_DRIVER(vl53l0x_deck);
-
-LOG_GROUP_START(range)
-LOG_ADD(LOG_UINT16, range, &range_last)
-LOG_GROUP_STOP(range)
-

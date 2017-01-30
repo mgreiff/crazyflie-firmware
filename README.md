@@ -18,23 +18,10 @@ brew install gcc-arm-none-eabi
 
 #### Debian/Ubuntu
 
-Tested on Ubuntu 14.04 64b and Ubuntu 16.04 64b:
-
-For ubuntu 14.04 :
+Tested on Ubuntu 14.04 64b:
 
 ```bash
 sudo add-apt-repository ppa:terry.guo/gcc-arm-embedded
-```
-
-For ubuntu 16.04 :
-
-```bash
-sudo add-apt-repository ppa:team-gcc-arm-embedded/ppa
-```
-
-After adding the corresponding repositories, execute the following commands
-
-```bash
 sudo apt-get update
 sudo apt-get install libnewlib-arm-none-eabi
 ```

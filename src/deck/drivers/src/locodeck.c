@@ -83,20 +83,20 @@ static lpsAlgoOptions_t algoOptions = {
   },
   .antennaDelay = (ANTENNA_OFFSET*499.2e6*128)/299792458.0, // In radio tick
   .rangingFailedThreshold = 6,
-
+ 
   .anchorPositionOk = false,
 
   // To set a static anchor position from startup, uncomment and modify the
   // following code:
-  // .anchorPosition = {
-  //   {x: 0.99, y: 1.49, z: 1.80},
-  //   {x: 0.99, y: 3.29, z: 1.80},
-  //   {x: 4.67, y: 2.54, z: 1.80},
-  //   {x: 0.59, y: 2.27, z: 0.20},
-  //   {x: 4.70, y: 3.38, z: 0.20},
-  //   {x: 4.70, y: 1.14, z: 0.20},
-  // },
-  // .anchorPositionOk = true,
+  .anchorPosition = {
+    {x: 0.00, y: 3.38, z: 2.20},
+    {x: 2.88, y: 3.38, z: 0.20},
+    {x: 5.73, y: 3.38, z: 2.20},
+    {x: 5.73, y: 0.00, z: 0.20},
+    {x: 2.88, y: 0.00, z: 2.20},
+    {x: 0.00, y: 0.00, z: 0.20},
+  },
+  .anchorPositionOk = true,
 };
 
 #if LPS_TDOA_ENABLE
@@ -331,97 +331,43 @@ static const DeckDriver dwm1000_deck = {
 DECK_DRIVER(dwm1000_deck);
 
 LOG_GROUP_START(ranging)
-#if (LOCODECK_NR_OF_ANCHORS > 0)
-LOG_ADD(LOG_FLOAT, distance0, &algoOptions.distance[0])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 1)
-LOG_ADD(LOG_FLOAT, distance1, &algoOptions.distance[1])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 2)
-LOG_ADD(LOG_FLOAT, distance2, &algoOptions.distance[2])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 3)
-LOG_ADD(LOG_FLOAT, distance3, &algoOptions.distance[3])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 4)
-LOG_ADD(LOG_FLOAT, distance4, &algoOptions.distance[4])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 5)
-LOG_ADD(LOG_FLOAT, distance5, &algoOptions.distance[5])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 6)
-LOG_ADD(LOG_FLOAT, distance6, &algoOptions.distance[6])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 7)
-LOG_ADD(LOG_FLOAT, distance7, &algoOptions.distance[7])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 0)
-LOG_ADD(LOG_FLOAT, pressure0, &algoOptions.pressures[0])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 1)
-LOG_ADD(LOG_FLOAT, pressure1, &algoOptions.pressures[1])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 2)
-LOG_ADD(LOG_FLOAT, pressure2, &algoOptions.pressures[2])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 3)
-LOG_ADD(LOG_FLOAT, pressure3, &algoOptions.pressures[3])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 4)
-LOG_ADD(LOG_FLOAT, pressure4, &algoOptions.pressures[4])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 5)
-LOG_ADD(LOG_FLOAT, pressure5, &algoOptions.pressures[5])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 6)
-LOG_ADD(LOG_FLOAT, pressure6, &algoOptions.pressures[6])
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 7)
-LOG_ADD(LOG_FLOAT, pressure7, &algoOptions.pressures[7])
-#endif
+LOG_ADD(LOG_FLOAT, distance1, &algoOptions.distance[0])
+LOG_ADD(LOG_FLOAT, distance2, &algoOptions.distance[1])
+LOG_ADD(LOG_FLOAT, distance3, &algoOptions.distance[2])
+LOG_ADD(LOG_FLOAT, distance4, &algoOptions.distance[3])
+LOG_ADD(LOG_FLOAT, distance5, &algoOptions.distance[4])
+LOG_ADD(LOG_FLOAT, distance6, &algoOptions.distance[5])
+LOG_ADD(LOG_FLOAT, distance7, &algoOptions.distance[6])
+LOG_ADD(LOG_FLOAT, distance8, &algoOptions.distance[7])
+LOG_ADD(LOG_FLOAT, pressure1, &algoOptions.pressures[0])
+LOG_ADD(LOG_FLOAT, pressure2, &algoOptions.pressures[1])
+LOG_ADD(LOG_FLOAT, pressure3, &algoOptions.pressures[2])
+LOG_ADD(LOG_FLOAT, pressure4, &algoOptions.pressures[3])
+LOG_ADD(LOG_FLOAT, pressure5, &algoOptions.pressures[4])
+LOG_ADD(LOG_FLOAT, pressure6, &algoOptions.pressures[5])
+LOG_ADD(LOG_FLOAT, pressure7, &algoOptions.pressures[6])
+LOG_ADD(LOG_FLOAT, pressure8, &algoOptions.pressures[7])
 LOG_ADD(LOG_UINT16, state, &algoOptions.rangingState)
 LOG_GROUP_STOP(ranging)
 
 PARAM_GROUP_START(anchorpos)
-#if (LOCODECK_NR_OF_ANCHORS > 0)
 PARAM_ADD(PARAM_FLOAT, anchor0x, &algoOptions.anchorPosition[0].x)
 PARAM_ADD(PARAM_FLOAT, anchor0y, &algoOptions.anchorPosition[0].y)
 PARAM_ADD(PARAM_FLOAT, anchor0z, &algoOptions.anchorPosition[0].z)
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 1)
 PARAM_ADD(PARAM_FLOAT, anchor1x, &algoOptions.anchorPosition[1].x)
 PARAM_ADD(PARAM_FLOAT, anchor1y, &algoOptions.anchorPosition[1].y)
 PARAM_ADD(PARAM_FLOAT, anchor1z, &algoOptions.anchorPosition[1].z)
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 2)
 PARAM_ADD(PARAM_FLOAT, anchor2x, &algoOptions.anchorPosition[2].x)
 PARAM_ADD(PARAM_FLOAT, anchor2y, &algoOptions.anchorPosition[2].y)
 PARAM_ADD(PARAM_FLOAT, anchor2z, &algoOptions.anchorPosition[2].z)
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 3)
 PARAM_ADD(PARAM_FLOAT, anchor3x, &algoOptions.anchorPosition[3].x)
 PARAM_ADD(PARAM_FLOAT, anchor3y, &algoOptions.anchorPosition[3].y)
 PARAM_ADD(PARAM_FLOAT, anchor3z, &algoOptions.anchorPosition[3].z)
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 4)
 PARAM_ADD(PARAM_FLOAT, anchor4x, &algoOptions.anchorPosition[4].x)
 PARAM_ADD(PARAM_FLOAT, anchor4y, &algoOptions.anchorPosition[4].y)
 PARAM_ADD(PARAM_FLOAT, anchor4z, &algoOptions.anchorPosition[4].z)
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 5)
 PARAM_ADD(PARAM_FLOAT, anchor5x, &algoOptions.anchorPosition[5].x)
 PARAM_ADD(PARAM_FLOAT, anchor5y, &algoOptions.anchorPosition[5].y)
 PARAM_ADD(PARAM_FLOAT, anchor5z, &algoOptions.anchorPosition[5].z)
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 6)
-PARAM_ADD(PARAM_FLOAT, anchor6x, &algoOptions.anchorPosition[6].x)
-PARAM_ADD(PARAM_FLOAT, anchor6y, &algoOptions.anchorPosition[6].y)
-PARAM_ADD(PARAM_FLOAT, anchor6z, &algoOptions.anchorPosition[6].z)
-#endif
-#if (LOCODECK_NR_OF_ANCHORS > 7)
-PARAM_ADD(PARAM_FLOAT, anchor7x, &algoOptions.anchorPosition[7].x)
-PARAM_ADD(PARAM_FLOAT, anchor7y, &algoOptions.anchorPosition[7].y)
-PARAM_ADD(PARAM_FLOAT, anchor7z, &algoOptions.anchorPosition[7].z)
-#endif
 PARAM_ADD(PARAM_UINT8, enable, &algoOptions.anchorPositionOk)
 PARAM_GROUP_STOP(anchorpos)

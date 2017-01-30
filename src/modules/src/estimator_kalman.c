@@ -24,14 +24,15 @@
  *
  * and
  *
- * "Covariance Correction Step for Kalman Filtering with an Attitude"
- * http://arc.aiaa.org/doi/abs/10.2514/1.G000848
+ * "Kalman filtering with an attitude" as published in the PhD thesis "Increased autonomy for quadrocopter systems: trajectory generation, fail-safe strategies, and state estimation"
+ * http://dx.doi.org/10.3929/ethz-a-010655275
+ * TODO: Update the above reference once the paper has been published
  *
  * Academic citation would be appreciated.
  *
  * BIBTEX ENTRIES:
-      @INPROCEEDINGS{MuellerHamerUWB2015,
-      author  = {Mueller, Mark W and Hamer, Michael and D’Andrea, Raffaello},
+      @INPROCEEDINGS{MuellerHamer2015,
+      author  = {Mueller, M. W. and Hamer, M. and D'Andrea, R.},
       title   = {Fusing ultra-wideband range measurements with accelerometers and rate gyroscopes for quadrocopter state estimation},
       booktitle = {2015 IEEE International Conference on Robotics and Automation (ICRA)},
       year    = {2015},
@@ -40,13 +41,12 @@
       doi     = {10.1109/ICRA.2015.7139421},
       ISSN    = {1050-4729}}
 
-      @ARTICLE{MuellerCovariance2016,
-      author={Mueller, Mark W and Hehn, Markus and D’Andrea, Raffaello},
-      title={Covariance Correction Step for Kalman Filtering with an Attitude},
-      journal={Journal of Guidance, Control, and Dynamics},
-      pages={1--7},
-      year={2016},
-      publisher={American Institute of Aeronautics and Astronautics}}
+      @PHDTHESIS {Mueller2016,
+      author  = {Mueller, M. W.},
+      title   = {Increased autonomy for quadrocopter systems: trajectory generation, fail-safe strategies, and state-estimation},
+      school  = {ETH Zurich},
+      year    = {2016},
+      doi     = {10.3929/ethz-a-010655275}}
  *
  * ============================================================================
  *
@@ -73,6 +73,7 @@
 
 #include "math.h"
 #include "arm_math.h"
+#include "string.h"
 
 //#define KALMAN_USE_BARO_UPDATE
 //#define KALMAN_NAN_CHECK
@@ -97,7 +98,7 @@ static void stateEstimatorUpdateWithBaro(baro_t *baro);
 static void stateEstimatorFinalize(sensorData_t *sensors, uint32_t tick);
 
 /*  - Externalization to move the filter's internal state into the external state expected by other modules */
-static void stateEstimatorExternalizeState(state_t *state, sensorData_t *sensors, uint32_t tick);
+static void stateEstimatorExternalizeState(M_state_t *state, sensorData_t *sensors, uint32_t tick);
 
 
 /**
@@ -186,7 +187,7 @@ static inline bool stateEstimatorHasTOFPacket(tofMeasurement_t *tof) {
 
 // The bounds on the covariance, these shouldn't be hit, but sometimes are... why?
 #define MAX_COVARIANCE (100)
-#define MIN_COVARIANCE (1e-6f)
+#define MIN_COVARIANCE (1e-6)
 
 // The bounds on states, these shouldn't be hit...
 #define MAX_POSITION (10) //meters
@@ -270,6 +271,8 @@ static uint32_t lastFlightCmd;
 static uint32_t takeoffTime;
 static uint32_t tdoaCount;
 
+
+
 /**
  * Supporting and utility functions
  */
@@ -316,27 +319,11 @@ static void stateEstimatorAssertNotNaN()
 }
 #endif
 
-#ifdef KALMAN_DECOUPLE_XY
-// Reset a state to 0 with max covariance
-// If called often, this decouples the state to the rest of the filter
-static void decoupleState(stateIdx_t state)
-{
-  // Set all covariance to 0
-  for(int i=0; i<STATE_DIM; i++) {
-    P[state][i] = 0;
-    P[i][state] = 0;
-  }
-  // Set state variance to maximum
-  P[state][state] = MAX_COVARIANCE;
-  // set state to zero
-  S[state] = 0;
-}
-#endif
 
 // --------------------------------------------------
 
 
-void stateEstimatorUpdate(state_t *state, sensorData_t *sensors, control_t *control)
+void stateEstimatorUpdate(M_state_t *state, sensorData_t *sensors, M_control_t *control)
 {
   // If the client (via a parameter update) triggers an estimator reset:
   if (resetEstimation) { stateEstimatorInit(); resetEstimation = false; }
@@ -345,14 +332,6 @@ void stateEstimatorUpdate(state_t *state, sensorData_t *sensors, control_t *cont
   bool doneUpdate = false;
 
   uint32_t tick = xTaskGetTickCount(); // would be nice if this had a precision higher than 1ms...
-
-#ifdef KALMAN_DECOUPLE_XY
-  // Decouple position states
-  decoupleState(STATE_X);
-  decoupleState(STATE_PX);
-  decoupleState(STATE_Y);
-  decoupleState(STATE_PY);
-#endif
 
   // Average the last IMU measurements. We do this because the prediction loop is
   // slower than the IMU loop, but the IMU information is required externally at
@@ -452,13 +431,6 @@ void stateEstimatorUpdate(state_t *state, sensorData_t *sensors, control_t *cont
    * we therefore consume all measurements since the last loop, rather than accumulating
    */
 
-  tofMeasurement_t tof;
-  while (stateEstimatorHasTOFPacket(&tof))
-  {
-    stateEstimatorUpdateWithTof(&tof);
-    doneUpdate = true;
-  }
-
   distanceMeasurement_t dist;
   while (stateEstimatorHasDistanceMeasurement(&dist))
   {
@@ -477,6 +449,13 @@ void stateEstimatorUpdate(state_t *state, sensorData_t *sensors, control_t *cont
   while (stateEstimatorHasTDOAPacket(&tdoa))
   {
     stateEstimatorUpdateWithTDOA(&tdoa);
+    doneUpdate = true;
+  }
+
+  tofMeasurement_t tof;
+  while (stateEstimatorHasTOFPacket(&tof))
+  {
+    stateEstimatorUpdateWithTof(&tof);
     doneUpdate = true;
   }
 
@@ -616,8 +595,8 @@ static void stateEstimatorPredict(float cmdThrust, Axis3f *acc, Axis3f *gyro, fl
    * where d is the attitude error expressed as Rodriges parameters, ie. d0 = 1/2*gyro.x*dt under the assumption that
    * d = [0,0,0] at the beginning of each prediction step and that gyro.x is constant over the sampling period
    *
-   * As derived in "Covariance Correction Step for Kalman Filtering with an Attitude"
-   * http://arc.aiaa.org/doi/abs/10.2514/1.G000848
+   * As derived in the following paper:
+   * TODO: Once it is published, cite the paper Müller, Hehn and D'Andrea, "Kalman Filtering with an Attitude".
    */
   float d0 = gyro->x*dt/2;
   float d1 = gyro->y*dt/2;
@@ -656,59 +635,45 @@ static void stateEstimatorPredict(float cmdThrust, Axis3f *acc, Axis3f *gyro, fl
   }
   quadIsFlying = (xTaskGetTickCount()-lastFlightCmd) < IN_FLIGHT_TIME_THRESHOLD;
 
-  float dx, dy, dz;
-  float tmpSPX, tmpSPY, tmpSPZ;
-  float zacc;
-
   if (quadIsFlying) // only acceleration in z direction
   {
     // TODO: In the next lines, can either use cmdThrust/mass, or acc->z. Need to test which is more reliable.
     // cmdThrust's error comes from poorly calibrated mass, and inexact cmdThrust -> thrust map
     // acc->z's error comes from measurement noise and accelerometer scaling
     // float zacc = cmdThrust;
-    zacc = acc->z;
+    float zacc = acc->z;
 
     // position updates in the body frame (will be rotated to inertial frame)
-    dx = S[STATE_PX] * dt;
-    dy = S[STATE_PY] * dt;
-    dz = S[STATE_PZ] * dt + zacc * dt2 / 2.0f; // thrust can only be produced in the body's Z direction
+    float dx = S[STATE_PX] * dt;
+    float dy = S[STATE_PY] * dt;
+    float dz = S[STATE_PZ] * dt + zacc * dt2 / 2.0f; // thrust can only be produced in the body's Z direction
 
     // position update
     S[STATE_X] += R[0][0] * dx + R[0][1] * dy + R[0][2] * dz;
     S[STATE_Y] += R[1][0] * dx + R[1][1] * dy + R[1][2] * dz;
     S[STATE_Z] += R[2][0] * dx + R[2][1] * dy + R[2][2] * dz - GRAVITY_MAGNITUDE * dt2 / 2.0f;
 
-    // keep previous time step's state for the update
-    tmpSPX = S[STATE_PX];
-    tmpSPY = S[STATE_PY];
-    tmpSPZ = S[STATE_PZ];
-
-    // body-velocity update: accelerometers - gyros cross velocity - gravity in body frame
-    S[STATE_PX] += dt * (gyro->z * tmpSPY - gyro->y * tmpSPZ - GRAVITY_MAGNITUDE * R[2][0]);
-    S[STATE_PY] += dt * (-gyro->z * tmpSPX + gyro->x * tmpSPZ - GRAVITY_MAGNITUDE * R[2][1]);
-    S[STATE_PZ] += dt * (zacc + gyro->y * tmpSPX - gyro->x * tmpSPY - GRAVITY_MAGNITUDE * R[2][2]);
+    // body-velocity update: accelerometers + gyros cross velocity - gravity in body frame
+    S[STATE_PX] += dt * (gyro->z * S[STATE_PY] - gyro->y * S[STATE_PZ] - GRAVITY_MAGNITUDE * R[2][0]);
+    S[STATE_PY] += dt * (gyro->z * S[STATE_PX] + gyro->x * S[STATE_PZ] - GRAVITY_MAGNITUDE * R[2][1]);
+    S[STATE_PZ] += dt * (zacc + gyro->y * S[STATE_PX] - gyro->x * S[STATE_PY] - GRAVITY_MAGNITUDE * R[2][2]);
   }
   else // Acceleration can be in any direction, as measured by the accelerometer. This occurs, eg. in freefall or while being carried.
   {
     // position updates in the body frame (will be rotated to inertial frame)
-    dx = S[STATE_PX] * dt + acc->x * dt2 / 2.0f;
-    dy = S[STATE_PY] * dt + acc->y * dt2 / 2.0f;
-    dz = S[STATE_PZ] * dt + acc->z * dt2 / 2.0f; // thrust can only be produced in the body's Z direction
+    float dx = S[STATE_PX] * dt + acc->x * dt2 / 2.0f;
+    float dy = S[STATE_PY] * dt + acc->y * dt2 / 2.0f;
+    float dz = S[STATE_PZ] * dt + acc->z * dt2 / 2.0f; // thrust can only be produced in the body's Z direction
 
     // position update
     S[STATE_X] += R[0][0] * dx + R[0][1] * dy + R[0][2] * dz;
     S[STATE_Y] += R[1][0] * dx + R[1][1] * dy + R[1][2] * dz;
     S[STATE_Z] += R[2][0] * dx + R[2][1] * dy + R[2][2] * dz - GRAVITY_MAGNITUDE * dt2 / 2.0f;
 
-    // keep previous time step's state for the update
-    tmpSPX = S[STATE_PX];
-    tmpSPY = S[STATE_PY];
-    tmpSPZ = S[STATE_PZ];
-
-    // body-velocity update: accelerometers - gyros cross velocity - gravity in body frame
-    S[STATE_PX] += dt * (acc->x + gyro->z * tmpSPY - gyro->y * tmpSPZ - GRAVITY_MAGNITUDE * R[2][0]);
-    S[STATE_PY] += dt * (acc->y - gyro->z * tmpSPX + gyro->x * tmpSPZ - GRAVITY_MAGNITUDE * R[2][1]);
-    S[STATE_PZ] += dt * (acc->z + gyro->y * tmpSPX - gyro->x * tmpSPY - GRAVITY_MAGNITUDE * R[2][2]);
+    // body-velocity update: accelerometers + gyros cross velocity - gravity in body frame
+    S[STATE_PX] += dt * (acc->x + gyro->z * S[STATE_PY] - gyro->y * S[STATE_PZ] - GRAVITY_MAGNITUDE * R[2][0]);
+    S[STATE_PY] += dt * (acc->y + gyro->z * S[STATE_PX] + gyro->x * S[STATE_PZ] - GRAVITY_MAGNITUDE * R[2][1]);
+    S[STATE_PZ] += dt * (acc->z + gyro->y * S[STATE_PX] - gyro->x * S[STATE_PY] - GRAVITY_MAGNITUDE * R[2][2]);
   }
 
   if(S[STATE_Z] < 0) {
@@ -901,6 +866,27 @@ static void stateEstimatorUpdateWithPosition(positionMeasurement_t *xyz)
   }
 }
 
+static float testRange; // TODO remove the temporary test variable
+
+static void stateEstimatorUpdateWithTof(tofMeasurement_t *tof)
+{
+  // Updates the filter with a measured distance in the zb direction using the
+  float h[STATE_DIM] = {0};
+  arm_matrix_instance_f32 H = {1, STATE_DIM, h};
+
+  // Only update the filter if the measurement is reliable (\hat{h} -> infty when R[2][2] -> 0)
+  if (fabs(R[2][2]) > 0.1){
+    float predictedDistance = S[STATE_Z] / R[2][2];
+    float measuredDistance = tof->distance / 1000.0; // scale from mm to m
+    testRange = measuredDistance;
+    //Measurement equation; h = z/((R*z_b)\dot z_b) = z/R[2][2]
+    h[STATE_Z] = 1 / R[2][2];
+
+    // Scalar update
+    stateEstimatorScalarUpdate(&H, measuredDistance-predictedDistance, tof->stdDev);
+  }
+}
+
 static void stateEstimatorUpdateWithDistance(distanceMeasurement_t *d)
 {
   // a measurement of distance to point (x, y, z)
@@ -926,24 +912,43 @@ static void stateEstimatorUpdateWithTDOA(tdoaMeasurement_t *tdoa)
 {
   /**
    * Measurement equation:
-   * dR = dT + d1 - d0
+   * dR = dT + dT*skew + d1 - d0
    */
 
-  float measurement = tdoa->distanceDiff;
+  // We cannot accurately position, until we have an accurate knowledge of skew.
+  // We assume that skew is uncorrelated with other quad states, we can therefore track it
+  // using a separate, 1D Kalman filter. Here, we predict the skew forward
+  float dt = (float)(tdoa->measurement[1].rx - tdoa->measurement[0].rx)*SECONDS_PER_TDOATICK;
+  if (dt > 0)
+  {
+    // We assume skew stays constant, but increase the variance
+    varSkew += powf(procNoiseSkew * dt, 2); // compute variance from standard deviation
+    stateEstimatorAddProcessNoise(dt); // add process noise occurring between packet receptions
+  }
+
+  // calculate the TDOA measurement
+  int64_t dR = tdoa->measurement[1].rx - tdoa->measurement[0].rx;
+  int64_t dT = tdoa->measurement[1].tx - tdoa->measurement[0].tx;
+  float measurement = METERS_PER_TDOATICK*(dR - dT); // possible to lose precision here in floats
 
   // predict based on current state
   float x = S[STATE_X];
   float y = S[STATE_Y];
   float z = S[STATE_Z];
 
-  float x1 = tdoa->anchorPosition[1].x, y1 = tdoa->anchorPosition[1].y, z1 = tdoa->anchorPosition[1].z;
-  float x0 = tdoa->anchorPosition[0].x, y0 = tdoa->anchorPosition[0].y, z0 = tdoa->anchorPosition[0].z;
+  float x1 = tdoa->measurement[1].x, y1 = tdoa->measurement[1].y, z1 = tdoa->measurement[1].z;
+  float x0 = tdoa->measurement[0].x, y0 = tdoa->measurement[0].y, z0 = tdoa->measurement[0].z;
 
   float d1 = sqrtf(powf(x - x1, 2) + powf(y - y1, 2) + powf(z - z1, 2));
   float d0 = sqrtf(powf(x - x0, 2) + powf(y - y0, 2) + powf(z - z0, 2));
 
-  float predicted = d1 - d0;
+  float predicted = METERS_PER_TDOATICK * dT * stateSkew + (d1 - d0);
   float error = measurement - predicted;
+  float varUwb = tdoa->stdDev*tdoa->stdDev*dt*dt;
+  float Hs = METERS_PER_TDOATICK * dT; // derivative of prediction equation with respect to stateSkew
+  float Ks = varSkew * Hs / (Hs * varSkew * Hs + varUwb);
+  stateSkew = (stateSkew + Ks * error);
+  varSkew = ((1 - Ks * Hs) * varSkew * (1 - Ks * Hs) + Ks * varUwb * Ks);
 
   if (tdoaCount >= 100)
   {
@@ -954,31 +959,10 @@ static void stateEstimatorUpdateWithTDOA(tdoaMeasurement_t *tdoa)
     h[STATE_Y] = ((y - y1) / d1 - (y - y0) / d0);
     h[STATE_Z] = ((z - z1) / d1 - (z - z0) / d0);
 
-    stateEstimatorScalarUpdate(&H, error, tdoa->stdDev);
+    stateEstimatorScalarUpdate(&H, error, varUwb);
   }
 
   tdoaCount++;
-}
-
-static void stateEstimatorUpdateWithTof(tofMeasurement_t *tof)
-{
-  // Updates the filter with a measured distance in the zb direction using the
-  float h[STATE_DIM] = {0};
-  arm_matrix_instance_f32 H = {1, STATE_DIM, h};
-
-  // Only update the filter if the measurement is reliable (\hat{h} -> infty when R[2][2] -> 0)
-  if (fabs(R[2][2]) > 0.1 && R[2][2] > 0){
-    float predictedDistance = S[STATE_Z] / R[2][2];
-    float measuredDistance = tof->distance; // [m]
-
-    //Measurement equation
-    //
-    // h = z/((R*z_b)\dot z_b) = z/cos(alpha)
-    h[STATE_Z] = 1 / R[2][2];
-
-    // Scalar update
-    stateEstimatorScalarUpdate(&H, measuredDistance-predictedDistance, tof->stdDev);
-  }
 }
 
 static void stateEstimatorFinalize(sensorData_t *sensors, uint32_t tick)
@@ -1000,7 +984,7 @@ static void stateEstimatorFinalize(sensorData_t *sensors, uint32_t tick)
   float v2 = S[STATE_D2];
 
   // Move attitude error into attitude if any of the angle errors are large enough
-  if ((fabsf(v0) > 0.1e-3f || fabsf(v1) > 0.1e-3f || fabsf(v2) > 0.1e-3f) && (fabsf(v0) < 10 && fabsf(v1) < 10 && fabsf(v2) < 10))
+  if ((fabsf(v0) > 0.1e-3 || fabsf(v1) > 0.1e-3 || fabsf(v2) > 0.1e-3) && (fabsf(v0) < 10 && fabsf(v1) < 10 && fabsf(v2) < 10))
   {
     float angle = arm_sqrt(v0*v0 + v1*v1 + v2*v2);
     float ca = arm_cos_f32(angle / 2.0f);
@@ -1027,8 +1011,8 @@ static void stateEstimatorFinalize(sensorData_t *sensors, uint32_t tick)
      *            ~ (I + [[-d]] + [[-d]]^2 / 2) Sigma_pre (I + [[-d]] + [[-d]]^2 / 2)'
      * where d is the attitude error expressed as Rodriges parameters, ie. d = tan(|v|/2)*v/|v|
      *
-     * As derived in "Covariance Correction Step for Kalman Filtering with an Attitude"
-     * http://arc.aiaa.org/doi/abs/10.2514/1.G000848
+     * As derived in the following paper:
+     * TODO: Once it is published, cite the paper Müller, Hehn and D'Andrea, "Kalman Filtering with an Attitude".
      */
 
     float d0 = v0/2; // the attitude error vector (v0,v1,v2) is small,
@@ -1106,8 +1090,9 @@ static void stateEstimatorFinalize(sensorData_t *sensors, uint32_t tick)
 }
 
 
-static void stateEstimatorExternalizeState(state_t *state, sensorData_t *sensors, uint32_t tick)
+static void stateEstimatorExternalizeState(M_state_t *state, sensorData_t *sensors, uint32_t tick)
 {
+
   // position state is already in world frame
   state->position = (point_t){
       .timestamp = tick,
@@ -1117,45 +1102,56 @@ static void stateEstimatorExternalizeState(state_t *state, sensorData_t *sensors
   };
 
   // velocity is in body frame and needs to be rotated to world frame
-  state->velocity = (velocity_t){
+  state->velocity = (point_t){
       .timestamp = tick,
       .x = R[0][0]*S[STATE_PX] + R[0][1]*S[STATE_PY] + R[0][2]*S[STATE_PZ],
       .y = R[1][0]*S[STATE_PX] + R[1][1]*S[STATE_PY] + R[1][2]*S[STATE_PZ],
       .z = R[2][0]*S[STATE_PX] + R[2][1]*S[STATE_PY] + R[2][2]*S[STATE_PZ]
   };
-
+  
   // Accelerometer measurements are in the body frame and need to be rotated to world frame.
   // Furthermore, the legacy code requires acc.z to be acceleration without gravity.
   // Finally, note that these accelerations are in Gs, and not in m/s^2, hence - 1 for removing gravity
-  state->acc = (acc_t){
-      .timestamp = tick,
-      .x = R[0][0]*sensors->acc.x + R[0][1]*sensors->acc.y + R[0][2]*sensors->acc.z,
-      .y = R[1][0]*sensors->acc.x + R[1][1]*sensors->acc.y + R[1][2]*sensors->acc.z,
-      .z = R[2][0]*sensors->acc.x + R[2][1]*sensors->acc.y + R[2][2]*sensors->acc.z - 1
-  };
+//  state->acc = (acc_t){
+//      .timestamp = tick,
+//      .x = R[0][0]*sensors->acc.x + R[0][1]*sensors->acc.y + R[0][2]*sensors->acc.z,
+//      .y = R[1][0]*sensors->acc.x + R[1][1]*sensors->acc.y + R[1][2]*sensors->acc.z,
+//      .z = R[2][0]*sensors->acc.x + R[2][1]*sensors->acc.y + R[2][2]*sensors->acc.z - 1
+//  };
 
   // convert the new attitude into Euler YPR
   float yaw = atan2f(2*(q[1]*q[2]+q[0]*q[3]) , q[0]*q[0] + q[1]*q[1] - q[2]*q[2] - q[3]*q[3]);
   float pitch = asinf(-2*(q[1]*q[3] - q[0]*q[2]));
   float roll = atan2f(2*(q[2]*q[3]+q[0]*q[1]) , q[0]*q[0] - q[1]*q[1] - q[2]*q[2] + q[3]*q[3]);
 
-  // Save attitude, adjusted for the legacy CF2 body coordinate system
-  state->attitude = (attitude_t){
+  // Save attitude
+  state->eulerAngles = (attitude_t){
       .timestamp = tick,
-      .roll = roll*RAD_TO_DEG,
-      .pitch = -pitch*RAD_TO_DEG,
-      .yaw = yaw*RAD_TO_DEG
+      .roll = roll,
+      .pitch = pitch,
+      .yaw = yaw
   };
 
-  // Save quaternion, hopefully one day this could be used in a better controller.
-  // Note that this is not adjusted for the legacy coordinate system
-  state->attitudeQuaternion = (quaternion_t){
+  state->eulerRates = (attitude_t){
       .timestamp = tick,
-      .w = q[0],
-      .x = q[1],
-      .y = q[2],
-      .z = q[3]
+      .roll = sensors->gyro.x,
+      .pitch = sensors->gyro.y,
+      .yaw = sensors->gyro.z
   };
+
+  state->bodyrate = (point_t) {
+      .timestamp = tick,
+      .x = sensors->gyro.x,
+      .y = sensors->gyro.y,
+      .z = sensors->gyro.z
+  };
+
+  state->quaternion = (M_quaternion_t) {
+      .qw = q[0],
+      .qv = {q[1], q[2], q[3]}
+  };
+
+  memcpy(state->rotation, R, sizeof(R));
 }
 
 
@@ -1189,11 +1185,6 @@ void stateEstimatorInit(void) {
   gyroAccumulatorCount = 0;
   thrustAccumulatorCount = 0;
   baroAccumulatorCount = 0;
-
-  // Reset all matrices to 0 (like uppon system reset)
-  memset(q, 0, sizeof(q));
-  memset(R, 0, sizeof(R));
-  memset(P, 0, sizeof(S));
 
   // TODO: Can we initialize this more intelligently?
   S[STATE_X] = 0.5;
@@ -1264,11 +1255,13 @@ bool stateEstimatorEnqueueTDOA(tdoaMeasurement_t *uwb)
 
 bool stateEstimatorEnqueuePosition(positionMeasurement_t *pos)
 {
+  // An external estimate of the quad-rotors position (x,y,z) [m]
   return stateEstimatorEnqueueExternalMeasurement(posDataQueue, (void *)pos);
 }
 
 bool stateEstimatorEnqueueDistance(distanceMeasurement_t *dist)
 {
+  // A distance (distance) [m] relative a fixed position (x,y,z) [m]
   return stateEstimatorEnqueueExternalMeasurement(distDataQueue, (void *)dist);
 }
 

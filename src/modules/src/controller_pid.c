@@ -32,30 +32,26 @@ bool stateControllerTest(void)
   return pass;
 }
 
-void stateController(control_t *control, setpoint_t *setpoint,
-                                         const sensorData_t *sensors,
+void stateController(control_t *control, const sensorData_t *sensors,
                                          const state_t *state,
+                                         const setpoint_t *setpoint,
                                          const uint32_t tick)
 {
   if (RATE_DO_EXECUTE(ATTITUDE_RATE, tick)) {
     // Rate-controled YAW is moving YAW angle setpoint
     if (setpoint->mode.yaw == modeVelocity) {
-       attitudeDesired.yaw -= setpoint->attitudeRate.yaw/500.0f;
-      while (attitudeDesired.yaw > 180.0f)
-        attitudeDesired.yaw -= 360.0f;
-      while (attitudeDesired.yaw < -180.0f)
-        attitudeDesired.yaw += 360.0f;
+       attitudeDesired.yaw -= setpoint->attitudeRate.yaw/500.0;
+      while (attitudeDesired.yaw > 180.0)
+        attitudeDesired.yaw -= 360.0;
+      while (attitudeDesired.yaw < -180.0)
+        attitudeDesired.yaw += 360.0;
     } else {
       attitudeDesired.yaw = setpoint->attitude.yaw;
     }
   }
 
   if (RATE_DO_EXECUTE(POSITION_RATE, tick)) {
-    if (setpoint->mode.z == modeAbs) {
-      positionController(&actuatorThrust, &attitudeDesired, setpoint, state);
-    } else if (setpoint->mode.z == modeVelocity) {
-      velocityController(&actuatorThrust, &attitudeDesired, setpoint, state);
-    }
+    positionController(&actuatorThrust, &attitudeDesired, state, setpoint);
   }
 
   if (RATE_DO_EXECUTE(ATTITUDE_RATE, tick)) {

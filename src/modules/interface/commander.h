@@ -39,16 +39,21 @@
 #define COMMANDER_WDT_TIMEOUT_STABILIZE  M2T(500)
 #define COMMANDER_WDT_TIMEOUT_SHUTDOWN   M2T(2000)
 
-#define COMMANDER_PRIORITY_DISABLE 0
-#define COMMANDER_PRIORITY_CRTP    1
-#define COMMANDER_PRIORITY_EXTRX   2
+/**
+ * CRTP commander data struct
+ */
+struct CommanderCrtpValues
+{
+  float roll;       // deg
+  float pitch;      // deg
+  float yaw;        // deg
+  uint16_t thrust;
+} __attribute__((packed));
 
 void commanderInit(void);
 bool commanderTest(void);
 uint32_t commanderGetInactivityTime(void);
-
-void commanderSetSetpoint(setpoint_t *setpoint, int priority);
-int commanderGetActivePriority(void);
+void commanderExtrxSet(const struct CommanderCrtpValues* val);
 
 void commanderGetSetpoint(setpoint_t *setpoint, const state_t *state);
 

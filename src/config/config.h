@@ -44,9 +44,8 @@
 #include "nrf24l01.h"
 
 #include "trace.h"
-#include "usec_time.h"
 
-#define PROTOCOL_VERSION 3
+#define PROTOCOL_VERSION 2
 
 #ifdef STM32F4XX
   #define P_NAME "Crazyflie 2.0"
@@ -59,17 +58,13 @@
   #define FREERTOS_MIN_STACK_SIZE 150       // M4-FPU register setup is bigger so stack needs to be bigger
   #define FREERTOS_MCU_CLOCK_HZ   168000000
 
-  #define configGENERATE_RUN_TIME_STATS 1
-  #define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS() initUsecTimer()
-  #define portGET_RUN_TIME_COUNTER_VALUE() usecTimestamp()
-
 #else
   #define P_NAME "Crazyflie 1.0"
   #define CONFIG_BLOCK_ADDRESS    (1024 * (128-1))
   #define MCU_ID_ADDRESS          0x1FFFF7E8
   #define MCU_FLASH_SIZE_ADDRESS  0x1FFFF7E0
-  #define FREERTOS_HEAP_SIZE      13900
-  #define FREERTOS_MIN_STACK_SIZE 80
+  #define FREERTOS_HEAP_SIZE      14000
+  #define FREERTOS_MIN_STACK_SIZE 100
   #define FREERTOS_MCU_CLOCK_HZ   72000000
 #endif
 
@@ -136,7 +131,7 @@
 #define LOG_TASK_STACKSIZE            configMINIMAL_STACK_SIZE
 #define MEM_TASK_STACKSIZE            configMINIMAL_STACK_SIZE
 #define PARAM_TASK_STACKSIZE          configMINIMAL_STACK_SIZE
-#define SENSORS_TASK_STACKSIZE        (2 * configMINIMAL_STACK_SIZE)
+#define SENSORS_TASK_STACKSIZE        configMINIMAL_STACK_SIZE
 #define STABILIZER_TASK_STACKSIZE     (3 * configMINIMAL_STACK_SIZE)
 #define NRF24LINK_TASK_STACKSIZE      configMINIMAL_STACK_SIZE
 #define ESKYLINK_TASK_STACKSIZE       configMINIMAL_STACK_SIZE

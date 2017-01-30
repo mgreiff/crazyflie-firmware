@@ -35,7 +35,7 @@
 #include "led.h"
 
 #ifdef UART_OUTPUT_TRACE_DATA
-  #include "uart_cf1.h"
+  #include "uart.h"
 #endif
 
 uint32_t traceTickCount;

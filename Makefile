@@ -18,9 +18,8 @@ PYTHON2           ?= python2
 DFU_UTIL          ?= dfu-util
 CLOAD             ?= 1
 DEBUG             ?= 0
-CLOAD_SCRIPT      ?= python3 -m cfloader
+CLOAD_SCRIPT      ?= ../crazyflie-clients-python/bin/cfloader
 CLOAD_CMDS        ?=
-CLOAD_ARGS        ?=
 PLATFORM					?= CF2
 LPS_TDMA_ENABLE   ?= 0
 LPS_TDOA_ENABLE   ?= 0
@@ -30,7 +29,6 @@ LPS_TDOA_ENABLE   ?= 0
 ESTIMATOR          ?= complementary
 CONTROLLER         ?= pid
 POWER_DISTRIBUTION ?= stock
-SENSORS 					 ?= cf2
 
 ######### Test activation ##########
 FATFS_DISKIO_TESTS  ?= 0	# Set to 1 to enable FatFS diskio function tests. Erases card.
@@ -146,33 +144,30 @@ PROJ_OBJ_CF2 += led_f405.o mpu6500.o i2cdev_f405.o ws2812_cf2.o lps25h.o i2c_drv
 PROJ_OBJ_CF2 += ak8963.o eeprom.o maxsonar.o piezo.o
 PROJ_OBJ_CF2 += uart_syslink.o swd.o uart1.o uart2.o watchdog.o
 PROJ_OBJ_CF2 += cppm.o
-PROJ_OBJ_CF2 += bmi160.o bma2x2.o bmg160.o bmp280.o bstdr_comm_support.o
 # USB Files
 PROJ_OBJ_CF2 += usb_bsp.o usblink.o usbd_desc.o usb.o
 
 # Hal
 PROJ_OBJ += crtp.o ledseq.o freeRTOSdebug.o buzzer.o
-PROJ_OBJ_CF1 += imu_cf1.o pm_f103.o nrf24link.o ow_none.o uart_cf1.o
-PROJ_OBJ_CF2 +=  pm_f405.o syslink.o radiolink.o ow_syslink.o proximity.o usec_time.o
+PROJ_OBJ_CF1 += imu_cf1.o pm_f103.o nrf24link.o ow_none.o uart.o
+PROJ_OBJ_CF2 += sensors_cf2.o pm_f405.o syslink.o radiolink.o ow_syslink.o proximity.o usec_time.o
 
-PROJ_OBJ_CF2 +=  sensors_$(SENSORS).o
 # libdw
 PROJ_OBJ_CF2 += libdw1000.o libdw1000Spi.o
 
 # Modules
+PROJ_OBJ += M_sequenceCommander.o M_flatnessGenerator.o M_control.o M_powerDistribution.o
 PROJ_OBJ += system.o comm.o console.o pid.o crtpservice.o param.o mem.o
-PROJ_OBJ += log.o worker.o trigger.o sitaw.o queuemonitor.o msp.o
-PROJ_OBJ_CF1 += sound_cf1.o sensors_cf1.o
-PROJ_OBJ_CF2 += platformservice.o sound_cf2.o extrx.o sysload.o
+PROJ_OBJ += log.o worker.o trigger.o sitaw.o queuemonitor.o
+PROJ_OBJ_CF1 += sound_cf1.o sensors_stock.o
+PROJ_OBJ_CF2 += platformservice.o sound_cf2.o extrx.o
 
 # Stabilizer modules
-PROJ_OBJ += commander.o crtp_commander.o crtp_commander_rpyt.o
-PROJ_OBJ += crtp_commander_generic.o ext_position.o
+PROJ_OBJ += commander.o ext_position.o
 PROJ_OBJ += attitude_pid_controller.o sensfusion6.o stabilizer.o
 PROJ_OBJ += position_estimator_altitude.o position_controller_pid.o
 PROJ_OBJ += estimator_$(ESTIMATOR).o controller_$(CONTROLLER).o
 PROJ_OBJ += power_distribution_$(POWER_DISTRIBUTION).o
-
 
 # Deck Core
 PROJ_OBJ_CF2 += deck.o deck_info.o deck_drivers.o deck_test.o
@@ -201,7 +196,6 @@ endif
 
 ifeq ($(LPS_TDOA_ENABLE), 1)
 PROJ_OBJ_CF2 += lpsTdoaTag.o
-CFLAGS += -DLPS_TDOA_ENABLE
 endif
 
 #Deck tests
@@ -273,8 +267,7 @@ STFLAGS_CF2 = -DSTM32F4XX -DSTM32F40_41xxx -DHSE_VALUE=8000000 -DUSE_STDPERIPH_D
 ifeq ($(DEBUG), 1)
   CFLAGS += -O0 -g3 -DDEBUG
 else
-	# Fail on warnings
-  CFLAGS += -Os -g3 -Werror
+  CFLAGS += -Os -g3
 endif
 
 ifeq ($(LTO), 1)
@@ -300,9 +293,9 @@ CFLAGS += -Wall -Wmissing-braces -fno-strict-aliasing $(C_PROFILE) -std=gnu11
 CFLAGS += -MD -MP -MF $(BIN)/dep/$(@).d -MQ $(@)
 #Permits to remove un-used functions and global variables from output file
 CFLAGS += -ffunction-sections -fdata-sections
-# Prevent promoting floats to doubles
-CFLAGS += -Wdouble-promotion
 
+# Fail on warnings
+#CFLAGS += -Werror
 
 ASFLAGS = $(PROCESSOR) $(INCLUDES)
 LDFLAGS = --specs=nano.specs $(PROCESSOR) -Wl,-Map=$(PROG).map,--cref,--gc-sections,--undefined=uxTopUsedPriority
@@ -377,7 +370,7 @@ size: compile
 #Radio bootloader
 cload:
 ifeq ($(CLOAD), 1)
-	$(CLOAD_SCRIPT) $(CLOAD_CMDS) flash $(CLOAD_ARGS) $(PROG).bin stm32-fw
+	$(CLOAD_SCRIPT) $(CLOAD_CMDS) flash $(PROG).bin stm32-fw
 else
 	@echo "Only cload build can be bootloaded. Launch build and cload with CLOAD=1"
 endif
@@ -420,6 +413,3 @@ include tools/make/targets.mk
 
 #include dependencies
 -include $(DEPS)
-
-unit:
-	rake unit "DEFINES=$(CFLAGS)" "FILES=$(FILES)"

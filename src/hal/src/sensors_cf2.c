@@ -811,7 +811,7 @@ bool sensorsManufacturingTest(void)
       }
       else
       {
-        DEBUG_PRINT("Acc level test Roll:%0.2f, Pitch:%0.2f [FAIL]\n", (double)roll, (double)pitch);
+        DEBUG_PRINT("Acc level test Roll:%0.2f, Pitch:%0.2f [FAIL]\n", roll, pitch);
         testStatus = false;
       }
     }

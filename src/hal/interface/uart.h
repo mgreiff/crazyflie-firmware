@@ -21,10 +21,10 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  *
- * uart_cf1.h - uart CRTP link and raw access functions
+ * uart.h - uart CRTP link and raw access functions
  */
-#ifndef UART_CF1_H_
-#define UART_CF1_H_
+#ifndef UART_H_
+#define UART_H_
 
 #include <stdbool.h>
 
@@ -87,7 +87,6 @@ int uartPutchar(int ch);
 /**
  * Uart printf macro that uses eprintf
  * @param[in] FMT String format
- * @param[in] FMT String format
  * @param[in] ... Parameters to print
  *
  * @note If UART Crtp link is activated this function does nothing
@@ -115,4 +114,4 @@ void uartIsr(void);
  */
 void uartDmaIsr(void);
 
-#endif /* UART_CF1_H_ */
+#endif /* UART_H_ */

@@ -29,7 +29,7 @@
 #include "num.h"
 #include "position_estimator.h"
 
-#define G 9.81f;
+#define G 9.81;
 
 struct selfState_s {
   float estimatedZ; // The current Z estimate, has same offset as asl
@@ -38,17 +38,15 @@ struct selfState_s {
   float velocityFactor;
   float vAccDeadband; // Vertical acceleration deadband
   float velZAlpha;   // Blending factor to avoid vertical speed to accumulate error
-  float estimatedVZ;
 };
 
 static struct selfState_s state = {
-  .estimatedZ = 0.0f,
-  .velocityZ = 0.0f,
-  .estAlpha = 0.997f,
-  .velocityFactor = 1.0f,
-  .vAccDeadband = 0.04f,
-  .velZAlpha = 0.995f,
-  .estimatedVZ = 0.0f,
+  .estimatedZ = 0.0,
+  .velocityZ = 0.0,
+  .estAlpha = 0.99,
+  .velocityFactor = 1.0,
+  .vAccDeadband = 0.04,
+  .velZAlpha = 0.995,
 };
 
 static void positionEstimateInternal(state_t* estimate, float asl, float dt, struct selfState_s* state);
@@ -63,17 +61,13 @@ void positionUpdateVelocity(float accWZ, float dt) {
 }
 
 static void positionEstimateInternal(state_t* estimate, float asl, float dt, struct selfState_s* state) {
-  static float prev_estimatedZ = 0;
   state->estimatedZ = state->estAlpha * state->estimatedZ +
-                     (1.0f - state->estAlpha) * asl +
+                     (1.0 - state->estAlpha) * asl +
                      state->velocityFactor * state->velocityZ * dt;
 
-  estimate->position.x = 0.0f;
-  estimate->position.y = 0.0f;
+  estimate->position.x = 0.0;
+  estimate->position.y = 0.0;
   estimate->position.z = state->estimatedZ;
-  estimate->velocity.z = (state->estimatedZ - prev_estimatedZ) / dt;
-  state->estimatedVZ = estimate->velocity.z;
-  prev_estimatedZ = state->estimatedZ;
 }
 
 static void positionUpdateVelocityInternal(float accWZ, float dt, struct selfState_s* state) {
@@ -83,7 +77,6 @@ static void positionUpdateVelocityInternal(float accWZ, float dt, struct selfSta
 
 LOG_GROUP_START(posEstimatorAlt)
 LOG_ADD(LOG_FLOAT, estimatedZ, &state.estimatedZ)
-LOG_ADD(LOG_FLOAT, estVZ, &state.estimatedVZ)
 LOG_ADD(LOG_FLOAT, velocityZ, &state.velocityZ)
 LOG_GROUP_STOP(posEstimatorAlt)
 

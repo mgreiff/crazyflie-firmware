@@ -59,11 +59,9 @@
 #include "queuemonitor.h"
 #include "buzzer.h"
 #include "sound.h"
-#include "sysload.h"
-#include "ext_position.h"
 
 #ifdef PLATFORM_CF1
-#include "uart_cf1.h"
+#include "uart.h"
 #endif
 
 #ifdef PLATFORM_CF2
@@ -104,7 +102,6 @@ void systemInit(void)
 
 #ifdef PLATFORM_CF2
   usblinkInit();
-  sysLoadInit();
 #endif
 
   /* Initialized hear and early so that DEBUG_PRINT (buffered) can be used early */
@@ -169,9 +166,18 @@ void systemTask(void *arg)
 
   //Init the high-levels modules
   systemInit();
+
+#ifndef USE_RADIOLINK_CRTP
+#ifdef UART_OUTPUT_TRACE_DATA
+  //debugInitTrace();
+#endif
+#ifdef ENABLE_UART
+//  uartInit();
+#endif
+#endif //ndef USE_RADIOLINK_CRTP
+
   commInit();
   commanderInit();
-  extPositionInit(); // Set callback for CRTP_PORT_POSITION
   stabilizerInit();
 #ifdef PLATFORM_CF2
   deckInit();
@@ -201,6 +207,7 @@ void systemTask(void *arg)
   {
     selftestPassed = 1;
     systemStart();
+    // TEMPORARILY DISABLED DUE TO LOTS 
     soundSetEffect(SND_STARTUP);
     ledseqRun(SYS_LED, seq_alive);
     ledseqRun(LINK_LED, seq_testPassed);

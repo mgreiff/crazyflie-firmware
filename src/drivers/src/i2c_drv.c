@@ -364,6 +364,10 @@ static void i2cdrvdevUnlockBus(GPIO_TypeDef* portSCL, GPIO_TypeDef* portSDA, uin
 void i2cdrvInit(I2cDrv* i2c)
 {
   i2cdrvInitBus(i2c);
+
+#ifdef I2CDRV_DEBUG_LOG_EVENTS
+  initUsecTimer();
+#endif
 }
 
 void i2cdrvCreateMessage(I2cMessage *message,

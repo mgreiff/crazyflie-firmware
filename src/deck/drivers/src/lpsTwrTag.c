@@ -26,22 +26,20 @@
 
 
 #include <string.h>
-
+#include "log.h"
 #include "lpsTwrTag.h"
 
-#include "FreeRTOS.h"
-#include "task.h"
-
-#include "log.h"
-
 #include "stabilizer_types.h"
-#ifdef ESTIMATOR_TYPE_kalman
+#if defined(ESTIMATOR_TYPE_kalman) || defined(ESTIMATOR_STATIC_LS) || defined(ESTIMATOR_STATIC_WLS)
 #include "estimator_kalman.h"
 #include "arm_math.h"
 #endif
 
-// Outlier rejection
-#ifdef ESTIMATOR_TYPE_kalman
+//#define ESTIMATOR_STATIC_LS
+//#define ESTIMATOR_STATIC_WLS
+
+// Outlier rejection and TOA measurements structs
+#if defined(ESTIMATOR_TYPE_kalman) || defined(ESTIMATOR_STATIC_LS) || defined(ESTIMATOR_STATIC_WLS)
   #define RANGING_HISTORY_LENGTH 32
   #define OUTLIER_TH 4
   static struct {
@@ -50,12 +48,35 @@
   } rangingStats[LOCODECK_NR_OF_ANCHORS];
 #endif
 
-// Rangin statistics
-static uint32_t rangingPerSec[LOCODECK_NR_OF_ANCHORS];
-static float rangingSuccessRate[LOCODECK_NR_OF_ANCHORS];
-// Used to calculate above values
-static uint32_t succededRanging[LOCODECK_NR_OF_ANCHORS];
-static uint32_t failedRanging[LOCODECK_NR_OF_ANCHORS];
+#if defined(ESTIMATOR_STATIC_LS) || defined(ESTIMATOR_STATIC_WLS)
+
+// LS estimator structs
+#if defined(ESTIMATOR_STATIC_LS)
+    static float LS_A[15][3];
+    static float LS_b[15];
+    static float estimate[3];
+#else
+    static float LS_A[LOCODECK_NR_OF_ANCHORS][4];
+    static float LS_W[LOCODECK_NR_OF_ANCHORS][LOCODECK_NR_OF_ANCHORS] = {0};
+    static float LS_b[LOCODECK_NR_OF_ANCHORS];
+    static float estimate[4];
+#endif
+
+// Help functions used in the static estimation
+static inline void mat_trans(const arm_matrix_instance_f32 * pSrc, arm_matrix_instance_f32 * pDst)
+{ configASSERT(ARM_MATH_SUCCESS == arm_mat_trans_f32(pSrc, pDst)); }
+static inline void mat_inv(const arm_matrix_instance_f32 * pSrc, arm_matrix_instance_f32 * pDst)
+{ configASSERT(ARM_MATH_SUCCESS == arm_mat_inverse_f32(pSrc, pDst)); }
+static inline void mat_mult(const arm_matrix_instance_f32 * pSrcA, const arm_matrix_instance_f32 * pSrcB, arm_matrix_instance_f32 * pDst)
+{ configASSERT(ARM_MATH_SUCCESS == arm_mat_mult_f32(pSrcA, pSrcB, pDst)); }
+
+
+  static struct {
+    float dist_sq;
+    float anchorDist_sq;
+    float anchorPos [3];
+  } staticData[LOCODECK_NR_OF_ANCHORS];
+#endif
 
 // Timestamps for ranging
 static dwTime_t poll_tx;
@@ -156,8 +177,8 @@ static uint32_t rxcallback(dwDevice_t *dev) {
       options->distance[current_anchor] = SPEED_OF_LIGHT * tprop;
       options->pressures[current_anchor] = report->asl;
 
-#ifdef ESTIMATOR_TYPE_kalman
-      // Outliers rejection
+#if defined(ESTIMATOR_TYPE_kalman) || defined(ESTIMATOR_STATIC_LS) || defined(ESTIMATOR_STATIC_WLS)
+      // Outlier rejection
       rangingStats[current_anchor].ptr = (rangingStats[current_anchor].ptr + 1) % RANGING_HISTORY_LENGTH;
       float32_t mean;
       float32_t stddev;
@@ -169,6 +190,8 @@ static uint32_t rxcallback(dwDevice_t *dev) {
       rangingStats[current_anchor].history[rangingStats[current_anchor].ptr] = options->distance[current_anchor];
 
       if (options->anchorPositionOk && (diff < (OUTLIER_TH*stddev))) {
+#if defined(ESTIMATOR_TYPE_kalman)
+        // Includes the measurements in the Kalman filter
         distanceMeasurement_t dist;
         dist.distance = options->distance[current_anchor];
         dist.x = options->anchorPosition[current_anchor].x;
@@ -176,11 +199,93 @@ static uint32_t rxcallback(dwDevice_t *dev) {
         dist.z = options->anchorPosition[current_anchor].z;
         dist.stdDev = 0.25;
         stateEstimatorEnqueueDistance(&dist);
-      }
 #endif
 
-      ranging_complete = true;
+#if defined(ESTIMATOR_STATIC_LS) || defined(ESTIMATOR_STATIC_WLS)
+        staticData[current_anchor].dist_sq = dist.distance * dist.distance;
+#endif
 
+#if defined(ESTIMATOR_STATIC_LS)
+        // Static estimation of position using SDS-TWR-LS
+        static float tmpAt[15 * 3];
+        static float tmpAtA[3 * 3];
+        static float tmpinvAtA[3 * 3];
+        static float tmpAtb[3];
+        static arm_matrix_instance_f32 tmpAtm = {3, 15, tmpAt};
+        static arm_matrix_instance_f32 tmpAtAm = {3, 3, tmpAtA};
+        static arm_matrix_instance_f32 tmpinvAtAm = {3, 3, tmpinvAtA};
+        static arm_matrix_instance_f32 tmpAtbm = {3, 1, tmpAtb};    
+
+        // Form matrices
+        int count = 0;
+        for (int jj = 0; jj < LOCODECK_NR_OF_ANCHORS; jj++){
+          for (int kk = 0; kk < LOCODECK_NR_OF_ANCHORS; kk++){
+            if (jj < kk) {
+              LS_A[count][0] = -2.0 * (staticData[jj].anchorPos[0] - staticData[kk].anchorPos[0]);
+              LS_A[count][1] = -2.0 * (staticData[jj].anchorPos[1] - staticData[kk].anchorPos[1]);
+              LS_A[count][2] = -2.0 * (staticData[jj].anchorPos[2] - staticData[kk].anchorPos[2]);
+              LS_b[count] = (staticData[jj].dist_sq - staticData[jj].anchorDist_sq) -
+                            (staticData[kk].dist_sq - staticData[kk].anchorDist_sq);
+              count++;
+            }
+          }
+        }
+
+        static arm_matrix_instance_f32 estimatem = {3, 1, estimate};  
+        static arm_matrix_instance_f32 tmpAm = {15, 3, (float *)LS_A};
+        static arm_matrix_instance_f32 tmpbm = {15, 1, (float *)LS_b};
+
+        // Form inv(AtA)
+        mat_trans(&tmpAm, &tmpAtm);
+        mat_mult(&tmpAtm, &tmpAm, &tmpAtAm);
+        mat_inv(&tmpAtAm, &tmpinvAtAm);
+
+        // Form inv(AtA)Atb
+        mat_mult(&tmpAtm, &tmpbm, &tmpAtbm);
+        mat_mult(&tmpinvAtAm, &tmpAtbm, &estimatem);
+
+#elif defined(ESTIMATOR_STATIC_WLS)
+        // Static estimation of position using SDS-TWR-WLS
+        static float At[4 * 6];
+        static float AtW[4 * 6];
+        static float AtWA[4 * 4];
+        static float invAtWA[4 * 4];
+        static float AtWb[4];
+        static arm_matrix_instance_f32 Atm = {6, 4, At};
+        static arm_matrix_instance_f32 AtWm = {6, 4, AtW};
+        static arm_matrix_instance_f32 AtWAm = {4, 4, AtWA};
+        static arm_matrix_instance_f32 invAtWAm = {4, 4, invAtWA};
+        static arm_matrix_instance_f32 AtWbm = {4, 1, AtWb};
+
+        // Form matrices
+        for (int jj = 0; jj < LOCODECK_NR_OF_ANCHORS; jj++){
+          LS_A[jj][0] = -2 * staticData[jj].anchorPos[2];
+          LS_A[jj][1] = -2 * staticData[jj].anchorPos[2];
+          LS_A[jj][2] = -2 * staticData[jj].anchorPos[2];
+          LS_A[jj][3] = 1.0;
+          LS_b[jj] = staticData[jj].dist_sq - staticData[jj].anchorDist_sq;
+          LS_W[jj][jj] = 1.0/(4.0 * staticData[jj].dist_sq);
+        }
+
+        static arm_matrix_instance_f32 estimatem = {4, 1, estimate};  
+        static arm_matrix_instance_f32 Am = {6, 4, (float *)LS_A};
+        static arm_matrix_instance_f32 Wm = {6, 6, (float *)LS_W};
+        static arm_matrix_instance_f32 bm = {6, 1, (float *)LS_b};
+
+        // Form inv(AtWA)
+        mat_trans(&Am, &Atm);
+        mat_mult(&Atm, &Wm, &AtWm);
+        mat_mult(&AtWm, &Am, &AtWAm);
+        mat_inv(&AtWAm, &invAtWAm);
+
+        // Form inv(AtWA)AtWb
+        mat_mult(&AtWm, &bm, &AtWbm);
+        mat_mult(&invAtWAm, &AtWbm, &estimatem);
+#endif
+      }
+#endif // kalman, LS, WLS
+
+      ranging_complete = true;
       return 0;
       break;
     }
@@ -213,12 +318,6 @@ void initiateRanging(dwDevice_t *dev)
 
 static uint32_t twrTagOnEvent(dwDevice_t *dev, uwbEvent_t event)
 {
-  static uint32_t statisticStartTick = 0;
-
-  if (statisticStartTick == 0) {
-    statisticStartTick = xTaskGetTickCount();
-  }
-
   switch(event) {
     case eventPacketReceived:
       return rxcallback(dev);
@@ -234,33 +333,10 @@ static uint32_t twrTagOnEvent(dwDevice_t *dev, uwbEvent_t event)
           options->failedRanging[current_anchor] ++;
           options->rangingState |= (1<<current_anchor);
         }
-
-        failedRanging[current_anchor]++;
       } else {
         options->rangingState |= (1<<current_anchor);
         options->failedRanging[current_anchor] = 0;
-
-        succededRanging[current_anchor]++;
       }
-
-      // Handle ranging statistic
-      if (xTaskGetTickCount() > (statisticStartTick+1000)) {
-        statisticStartTick = xTaskGetTickCount();
-
-        for (int i=0; i<LOCODECK_NR_OF_ANCHORS; i++) {
-          rangingPerSec[i] = failedRanging[i] + succededRanging[i];
-          if (rangingPerSec[i] > 0) {
-            rangingSuccessRate[i] = 100.0f*(float)succededRanging[i] / (float)rangingPerSec[i];
-          } else {
-            rangingSuccessRate[i] = 0.0f;
-          }
-
-          failedRanging[i] = 0;
-          succededRanging[i] = 0;
-        }
-      }
-
-
       ranging_complete = false;
       initiateRanging(dev);
       return MAX_TIMEOUT;
@@ -301,6 +377,18 @@ static void twrTagInit(dwDevice_t *dev, lpsAlgoOptions_t* algoOptions)
   memset(options->distance, 0, sizeof(options->distance));
   memset(options->pressures, 0, sizeof(options->pressures));
   memset(options->failedRanging, 0, sizeof(options->failedRanging));
+  
+#if defined(ESTIMATOR_STATIC_LS) || defined(ESTIMATOR_STATIC_WLS)
+  // Computes squared distance and extracts anchor positions
+  for (int ii = 0; ii < LOCODECK_NR_OF_ANCHORS; ii++){
+    staticData[ii].anchorPos[0] = options->anchorPosition[ii].x;
+    staticData[ii].anchorPos[1] = options->anchorPosition[ii].y;
+    staticData[ii].anchorPos[2] = options->anchorPosition[ii].z;
+    staticData[ii].anchorDist_sq = staticData[ii].anchorPos[0] * staticData[ii].anchorPos[0] +
+                                   staticData[ii].anchorPos[1] * staticData[ii].anchorPos[1] +
+                                   staticData[ii].anchorPos[2] * staticData[ii].anchorPos[2];
+  }
+#endif
 }
 
 uwbAlgorithm_t uwbTwrTagAlgorithm = {
@@ -308,7 +396,10 @@ uwbAlgorithm_t uwbTwrTagAlgorithm = {
   .onEvent = twrTagOnEvent,
 };
 
-LOG_GROUP_START(twr)
-LOG_ADD(LOG_FLOAT, rangingSuccessRate0, &rangingSuccessRate[0])
-LOG_ADD(LOG_UINT32, rangingPerSec0, &rangingPerSec[0])
-LOG_GROUP_STOP(twr)
+/*
+LOG_GROUP_START(static_estimator)
+  LOG_ADD(LOG_FLOAT, x, &estimate[0])
+  LOG_ADD(LOG_FLOAT, y, &estimate[1])
+  LOG_ADD(LOG_FLOAT, z, &estimate[2])
+LOG_GROUP_STOP(static_estimator)
+*/

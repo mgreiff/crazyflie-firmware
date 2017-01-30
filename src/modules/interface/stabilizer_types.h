@@ -76,9 +76,14 @@ typedef struct quaternion_s {
   };
 } quaternion_t;
 
+typedef struct toaMeasurement_s {
+  int8_t senderId;
+  float x, y, z;
+  int64_t rx, tx;
+} toaMeasurement_t;
+
 typedef struct tdoaMeasurement_s {
-  point_t anchorPosition[2];
-  float distanceDiff;
+  toaMeasurement_t measurement[2];
   float stdDev;
 } tdoaMeasurement_t;
 
@@ -143,8 +148,6 @@ typedef enum mode_e {
 } mode_t;
 
 typedef struct setpoint_s {
-  uint32_t timestamp;
-
   attitude_t attitude;
   attitude_t attitudeRate;
   float thrust;
@@ -188,6 +191,7 @@ typedef struct tofMeasurement_s {
 #define RATE_100_HZ 100
 #define RATE_50_HZ 50
 #define RATE_25_HZ 25
+#define RATE_10_HZ 10
 
 #ifdef ESTIMATOR_TYPE_kalman
 #define RATE_MAIN_LOOP RATE_1000_HZ
